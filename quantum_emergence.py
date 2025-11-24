@@ -23,6 +23,37 @@ if platform.system() == 'Windows':
 else:
     NUM_WORKERS = max(1, cpu_count() - 1)  # Оставляем одно ядро свободным
 
+# Максимальное количество кубитов для полных симуляций
+# Для complex128: 2^30 * 16 байт ≈ 16 GB, 2^35 ≈ 512 GB (слишком много)
+MAX_QUBITS_FULL_SIMULATION = 30  # Безопасный лимит для полных симуляций
+MAX_QUBITS_LIMITED = 50  # Для ограниченных симуляций (без полного вектора состояния)
+
+def estimate_memory_requirement(num_qubits: int, dtype_size: int = 16) -> float:
+    """
+    Оценивает требуемую память для квантовой системы.
+    
+    Args:
+        num_qubits: Количество кубитов
+        dtype_size: Размер одного элемента в байтах (complex128 = 16)
+    
+    Returns:
+        Требуемая память в байтах
+    """
+    return (2 ** num_qubits) * dtype_size
+
+def check_memory_safety(num_qubits: int, max_qubits: int = MAX_QUBITS_FULL_SIMULATION) -> bool:
+    """
+    Проверяет, безопасно ли создавать систему с данным количеством кубитов.
+    
+    Args:
+        num_qubits: Количество кубитов
+        max_qubits: Максимальное безопасное количество кубитов
+    
+    Returns:
+        True если безопасно, False иначе
+    """
+    return num_qubits <= max_qubits
+
 # Глобальная переменная для хранения всех данных
 simulation_data = {
     'timestamp': datetime.now().isoformat(),
@@ -61,7 +92,16 @@ def _simulate_basic_system(config):
     """Вспомогательная функция для параллельного выполнения базовой симуляции"""
     from reality_sim import QuantumFabric
     
-    system = QuantumFabric(num_qubits=config['num_qubits'], 
+    num_qubits = config['num_qubits']
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
+    
+    system = QuantumFabric(num_qubits=num_qubits, 
                           entanglement_strength=config['entanglement_strength'])
     initial_info = {
         'num_qubits': system.n,
@@ -133,7 +173,16 @@ def _simulate_entanglement_config(config):
     """Вспомогательная функция для параллельного выполнения анализа запутанности"""
     from reality_sim import QuantumFabric
     
-    system = QuantumFabric(num_qubits=config['num_qubits'], 
+    num_qubits = config['num_qubits']
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
+    
+    system = QuantumFabric(num_qubits=num_qubits, 
                           entanglement_strength=config['strength'])
     initial_ent = system.get_entanglement_entropy()
     
@@ -162,7 +211,16 @@ def _simulate_measurement_config(config):
     """Вспомогательная функция для параллельного выполнения статистики измерений"""
     from reality_sim import QuantumFabric
     
-    system = QuantumFabric(num_qubits=config['num_qubits'])
+    num_qubits = config['num_qubits']
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
+    
+    system = QuantumFabric(num_qubits=num_qubits)
     system.apply_entanglement_operator(config['pairs'])
     
     stats_per_qubit = {}
@@ -188,6 +246,14 @@ def _simulate_measurement_config(config):
 def _simulate_large_system(num_qubits):
     """Вспомогательная функция для параллельного выполнения больших систем"""
     from reality_sim import QuantumFabric
+    
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
     
     system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
     max_pairs = min(30, num_qubits - 1)
@@ -222,6 +288,14 @@ def _simulate_qubit_count_sweep(num_qubits):
     """Вспомогательная функция для sweep по количеству кубитов"""
     from reality_sim import QuantumFabric
     
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
+    
     system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
     pairs = [(i, i+1) for i in range(num_qubits - 1)]
     system.apply_entanglement_operator(pairs)
@@ -237,6 +311,14 @@ def _simulate_multi_qubit_strength(args):
     """Вспомогательная функция для sweep силы запутанности для разных систем"""
     from reality_sim import QuantumFabric
     num_qubits, strength = args
+    
+    if not check_memory_safety(num_qubits):
+        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+        return {
+            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'skipped': True
+        }
     
     system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength)
     pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]
@@ -269,12 +351,14 @@ def demo_basic_quantum_system():
             'num_qubits': num_qubits,
             'entanglement_strength': 1.0
         })
-    # Для больших систем (31-50) - только полная запутанность, реже
-    for num_qubits in range(35, 51, 5):  # Каждые 5 кубитов
-        basic_systems_configs.append({
-            'num_qubits': num_qubits,
-            'entanglement_strength': 1.0
-        })
+    # Для больших систем (31-30) - только полная запутанность, реже
+    # Ограничиваем до MAX_QUBITS_FULL_SIMULATION для безопасности памяти
+    for num_qubits in range(31, min(MAX_QUBITS_FULL_SIMULATION + 1, 51), 5):  # Каждые 5 кубитов
+        if num_qubits <= MAX_QUBITS_FULL_SIMULATION:
+            basic_systems_configs.append({
+                'num_qubits': num_qubits,
+                'entanglement_strength': 1.0
+            })
     
     print(f"Используется {NUM_WORKERS} параллельных процессов для {len(basic_systems_configs)} конфигураций...")
     
@@ -291,17 +375,25 @@ def demo_basic_quantum_system():
                 print(f"  Обработано {completed}/{len(basic_systems_configs)} систем...")
             try:
                 result = future.result()
-                results.append(result)
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    results.append(result)
+            except MemoryError as e:
+                config_idx = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
     
     # Показываем детали для первых 3 систем
-    print("\n--- Детали первых 3 систем ---")
-    for idx, result in enumerate(results[:3]):
-        print(f"\nСистема {idx + 1}: {result['num_qubits']} кубитов")
-        print(f"  Запутанность: {result['initial_entanglement']:.4f} → {result['entanglement_entropy']:.4f}")
-        print(f"  Когерентность: {result['coherence']:.6f}")
+    if results:
+        print("\n--- Детали первых 3 систем ---")
+        for idx, result in enumerate(results[:3]):
+            if 'num_qubits' in result and 'initial_entanglement' in result:
+                print(f"\nСистема {idx + 1}: {result['num_qubits']} кубитов")
+                print(f"  Запутанность: {result['initial_entanglement']:.4f} → {result['entanglement_entropy']:.4f}")
+                print(f"  Когерентность: {result['coherence']:.6f}")
     
     simulation_data['quantum_systems'].extend(results)
     
@@ -552,8 +644,9 @@ def demo_entanglement_analysis():
     for pairs in pairs_8:
         configurations.append({'num_qubits': 8, 'pairs': pairs, 'strength': 1.0})
     
-    # Системы от 9 до 50 кубитов - используем простые паттерны
-    for num_qubits in range(9, 51):
+    # Системы от 9 до MAX_QUBITS_FULL_SIMULATION кубитов - используем простые паттерны
+    max_qubits = min(MAX_QUBITS_FULL_SIMULATION, 50)
+    for num_qubits in range(9, max_qubits + 1):
         if num_qubits <= 20:
             # Для систем до 20 кубитов - несколько паттернов
             patterns = [
@@ -563,7 +656,7 @@ def demo_entanglement_analysis():
             for pairs in patterns:
                 configurations.append({'num_qubits': num_qubits, 'pairs': pairs, 'strength': 1.0})
         else:
-            # Для больших систем (21-50) - только один простой паттерн
+            # Для больших систем (21-MAX_QUBITS_FULL_SIMULATION) - только один простой паттерн
             pairs = [(i, i+1) for i in range(0, min(20, num_qubits-1))]  # Первые 20 пар
             configurations.append({'num_qubits': num_qubits, 'pairs': pairs, 'strength': 1.0})
     
@@ -582,10 +675,16 @@ def demo_entanglement_analysis():
                 print(f"  Обработано {completed}/{len(configurations)} конфигураций...")
             try:
                 result = future.result()
-                entanglement_data.append(result)
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    entanglement_data.append(result)
+            except MemoryError as e:
+                config_idx = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
     
     print(f"\nПоказаны результаты для первых 5 конфигураций:")
     for config, data in zip(configurations[:5], entanglement_data[:5]):
@@ -636,9 +735,12 @@ def demo_parameter_sweep():
     
     # Дополнительный sweep по количеству кубитов
     print("\n=== Анализ зависимости от количества кубитов ===")
-    # От 2 до 50 кубитов, с разной частотой для больших систем
+    # От 2 до MAX_QUBITS_FULL_SIMULATION кубитов, с разной частотой для больших систем
     qubit_counts = list(range(2, 21))  # От 2 до 20 - все
-    qubit_counts.extend(range(25, 51, 5))  # От 25 до 50 - каждые 5
+    # Ограничиваем до безопасного лимита
+    max_safe = min(MAX_QUBITS_FULL_SIMULATION, 50)
+    if max_safe > 20:
+        qubit_counts.extend(range(25, max_safe + 1, 5))  # От 25 до max_safe - каждые 5
     
     print(f"Используется {NUM_WORKERS} параллельных процессов для {len(qubit_counts)} значений...")
     
@@ -653,10 +755,16 @@ def demo_parameter_sweep():
             completed += 1
             try:
                 result = future.result()
-                qubit_sweep_data.append(result)
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    qubit_sweep_data.append(result)
+            except MemoryError as e:
+                num_qubits = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке {num_qubits} кубитов: {e}")
             except Exception as e:
                 num_qubits = futures[future]
-                print(f"  Ошибка при обработке {num_qubits} кубитов: {e}")
+                print(f"  ⚠ Ошибка при обработке {num_qubits} кубитов: {e}")
     
     # Сортируем по количеству кубитов
     qubit_sweep_data.sort(key=lambda x: x['num_qubits'])
@@ -679,10 +787,17 @@ def demo_parameter_sweep():
     for num_qubits in [2, 3, 4, 5]:
         for strength in np.linspace(0.1, 1.0, 50):
             multi_qubit_params.append((num_qubits, strength))
-    # Для больших систем - только несколько значений силы
-    for num_qubits in [10, 20, 30, 40, 50]:
-        for strength in [0.25, 0.5, 0.75, 1.0]:
-            multi_qubit_params.append((num_qubits, strength))
+    # Для больших систем - только несколько значений силы (ограничиваем до безопасного лимита)
+    large_systems = [10, 20, 30]
+    if MAX_QUBITS_FULL_SIMULATION >= 40:
+        large_systems.append(40)
+    if MAX_QUBITS_FULL_SIMULATION >= 50:
+        large_systems.append(50)
+    
+    for num_qubits in large_systems:
+        if num_qubits <= MAX_QUBITS_FULL_SIMULATION:
+            for strength in [0.25, 0.5, 0.75, 1.0]:
+                multi_qubit_params.append((num_qubits, strength))
     
     print(f"Используется {NUM_WORKERS} параллельных процессов для {len(multi_qubit_params)} комбинаций...")
     
@@ -699,10 +814,16 @@ def demo_parameter_sweep():
                 print(f"  Обработано {completed}/{len(multi_qubit_params)} комбинаций...")
             try:
                 result = future.result()
-                multi_qubit_sweep.append(result)
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    multi_qubit_sweep.append(result)
+            except MemoryError as e:
+                args = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке (qubits={args[0]}, strength={args[1]}): {e}")
             except Exception as e:
                 args = futures[future]
-                print(f"  Ошибка при обработке (qubits={args[0]}, strength={args[1]}): {e}")
+                print(f"  ⚠ Ошибка при обработке (qubits={args[0]}, strength={args[1]}): {e}")
     
     simulation_data['parameter_sweeps'].append({
         'type': 'multi_qubit_strength',
@@ -751,14 +872,17 @@ def demo_multi_measurement_statistics():
                 'pairs': pairs
             })
     
-    # Большие системы (31-50) - минимальные конфигурации
-    for num_qubits in range(35, 51, 5):  # 35, 40, 45, 50
-        pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]  # Ограничиваем количество пар
-        measurement_configs.append({
-            'num_qubits': num_qubits,
-            'num_measurements': 10000,  # Меньше измерений для больших систем
-            'pairs': pairs
-        })
+    # Большие системы (31-MAX_QUBITS_FULL_SIMULATION) - минимальные конфигурации
+    max_safe = min(MAX_QUBITS_FULL_SIMULATION, 50)
+    if max_safe >= 35:
+        for num_qubits in range(35, max_safe + 1, 5):  # 35, 40, 45, 50 (если безопасно)
+            if num_qubits <= MAX_QUBITS_FULL_SIMULATION:
+                pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]  # Ограничиваем количество пар
+                measurement_configs.append({
+                    'num_qubits': num_qubits,
+                    'num_measurements': 10000,  # Меньше измерений для больших систем
+                    'pairs': pairs
+                })
     
     print(f"Используется {NUM_WORKERS} параллельных процессов для {len(measurement_configs)} конфигураций...")
     
@@ -775,16 +899,22 @@ def demo_multi_measurement_statistics():
                 print(f"  Обработано {completed}/{len(measurement_configs)} конфигураций...")
             try:
                 result = future.result()
-                measurement_data.append(result)
-                
-                if completed <= 5:  # Показываем детали только для первых 5
-                    print(f"\n{result['num_qubits']} кубитов, {result['num_measurements']} измерений:")
-                    for i in range(result['num_qubits']):
-                        stats = result['measurement_stats'][f'qubit_{i}']
-                        print(f"  Кубит {i}: P(|0>)={stats['prob_0']:.4f}, P(|1>)={stats['prob_1']:.4f}")
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    measurement_data.append(result)
+                    
+                    if completed <= 5:  # Показываем детали только для первых 5
+                        print(f"\n{result['num_qubits']} кубитов, {result['num_measurements']} измерений:")
+                        for i in range(result['num_qubits']):
+                            stats = result['measurement_stats'][f'qubit_{i}']
+                            print(f"  Кубит {i}: P(|0>)={stats['prob_0']:.4f}, P(|1>)={stats['prob_1']:.4f}")
+            except MemoryError as e:
+                config_idx = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
     
     simulation_data['measurement_statistics'].extend(measurement_data)
 
@@ -793,8 +923,10 @@ if __name__ == "__main__":
     print("РАСШИРЕННАЯ СИМУЛЯЦИЯ КВАНТОВОЙ ЭМЕРДЖЕНТНОСТИ")
     print("=" * 60)
     print(f"⚡ Параллелизация: используется {NUM_WORKERS} ядер CPU")
-    print("⚠ Внимание: Симуляции расширены до 50 кубитов.")
-    print("   Для больших систем вычисления могут занять больше времени.")
+    print(f"⚠ Внимание: Максимальное количество кубитов для полных симуляций: {MAX_QUBITS_FULL_SIMULATION}")
+    print(f"   Системы с >{MAX_QUBITS_FULL_SIMULATION} кубитами будут пропущены из-за требований памяти.")
+    mem_30 = estimate_memory_requirement(30) / (1024**3)
+    print(f"   Для {MAX_QUBITS_FULL_SIMULATION} кубитов требуется ~{mem_30:.1f} GB памяти.")
     print("=" * 60)
     
     demo_basic_quantum_system()
@@ -813,8 +945,11 @@ if __name__ == "__main__":
     # Дополнительный анализ запутанности с большим количеством кубитов
     print("\n=== Дополнительный анализ больших систем ===")
     large_systems = []
-    # Анализ систем от 10 до 50 кубитов
-    large_qubit_counts = list(range(10, 21)) + list(range(25, 51, 5))  # 10-20 все, 25-50 каждые 5
+    # Анализ систем от 10 до MAX_QUBITS_FULL_SIMULATION кубитов
+    large_qubit_counts = list(range(10, 21))  # 10-20 все
+    max_safe = min(MAX_QUBITS_FULL_SIMULATION, 50)
+    if max_safe > 20:
+        large_qubit_counts.extend(range(25, max_safe + 1, 5))  # 25-max_safe каждые 5
     
     print(f"Используется {NUM_WORKERS} параллельных процессов для {len(large_qubit_counts)} больших систем...")
     
@@ -831,14 +966,20 @@ if __name__ == "__main__":
                 print(f"  Обработано {completed}/{len(large_qubit_counts)} систем...")
             try:
                 result = future.result()
-                large_systems.append(result)
-                
-                if completed <= 5 or completed % 5 == 0:
-                    print(f"{result['num_qubits']} кубитов ({result['entanglement_pairs']} пар): "
-                          f"энтропия = {result['entanglement_entropy']:.4f}")
+                if isinstance(result, dict) and result.get('skipped'):
+                    print(f"  ⚠ Пропущено: {result.get('error', 'Недостаточно памяти')}")
+                else:
+                    large_systems.append(result)
+                    
+                    if completed <= 5 or completed % 5 == 0:
+                        print(f"{result['num_qubits']} кубитов ({result['entanglement_pairs']} пар): "
+                              f"энтропия = {result['entanglement_entropy']:.4f}")
+            except MemoryError as e:
+                num_qubits = futures[future]
+                print(f"  ⚠ Ошибка памяти при обработке системы с {num_qubits} кубитами: {e}")
             except Exception as e:
                 num_qubits = futures[future]
-                print(f"  Ошибка при обработке системы с {num_qubits} кубитами: {e}")
+                print(f"  ⚠ Ошибка при обработке системы с {num_qubits} кубитами: {e}")
     
     simulation_data['quantum_systems'].extend(large_systems)
     
