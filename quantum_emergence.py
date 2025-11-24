@@ -7,10 +7,21 @@ import csv
 from typing import List, Dict, Any
 import numpy as np
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
+import functools
+import platform
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from reality_sim import QuantumFabric, EmergentLaws, Observer, HUMAN_OBSERVER, LIGO_OBSERVER, ELECTRON_OBSERVER
+
+# Количество доступных ядер CPU
+# На Windows используем все ядра, на Unix оставляем одно свободным
+if platform.system() == 'Windows':
+    NUM_WORKERS = cpu_count()
+else:
+    NUM_WORKERS = max(1, cpu_count() - 1)  # Оставляем одно ядро свободным
 
 # Глобальная переменная для хранения всех данных
 simulation_data = {
@@ -45,6 +56,199 @@ def save_decoherence_to_csv(filename: str = 'decoherence_data.csv'):
             ])
     print(f"✓ Данные декогеренции сохранены в {filename}")
 
+# Вспомогательные функции для параллелизации
+def _simulate_basic_system(config):
+    """Вспомогательная функция для параллельного выполнения базовой симуляции"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=config['num_qubits'], 
+                          entanglement_strength=config['entanglement_strength'])
+    initial_info = {
+        'num_qubits': system.n,
+        'entanglement_strength': system.entanglement_strength,
+        'initial_coherence': float(system.get_coherence()),
+        'initial_entanglement': float(system.get_entanglement_entropy())
+    }
+    
+    pairs = [(i, i+1) for i in range(system.n - 1)]
+    system.apply_entanglement_operator(pairs)
+    
+    after_entanglement_info = {
+        'coherence': float(system.get_coherence()),
+        'entanglement_entropy': float(system.get_entanglement_entropy()),
+        'entanglement_pairs': pairs
+    }
+    
+    all_stats = {}
+    for i in range(system.n):
+        stats = system.collect_measurement_statistics(i, 10000)
+        all_stats[f'qubit_{i}'] = {
+            'count_0': stats['count_0'],
+            'count_1': stats['count_1'],
+            'prob_0': float(stats['prob_0']),
+            'prob_1': float(stats['prob_1']),
+            'num_measurements': stats['num_measurements']
+        }
+    
+    qubit_probs = {}
+    for i in range(system.n):
+        prob_0, prob_1 = system.get_qubit_probabilities(i)
+        qubit_probs[f'qubit_{i}'] = {'prob_0': float(prob_0), 'prob_1': float(prob_1)}
+    
+    return {
+        **initial_info,
+        **after_entanglement_info,
+        'measurement_stats': all_stats,
+        'qubit_probabilities': qubit_probs
+    }
+
+def _simulate_particle_creation(args):
+    """Вспомогательная функция для параллельного выполнения симуляции рождения частиц"""
+    from reality_sim import EmergentLaws
+    vacuum_energy, time_steps = args
+    
+    particles = EmergentLaws.simulate_particle_creation(
+        vacuum_energy=vacuum_energy, 
+        time_steps=time_steps
+    )
+    
+    creation_times = [p[0]['created_at'] for p in particles]
+    
+    return {
+        'vacuum_energy': float(vacuum_energy),
+        'time_steps': time_steps,
+        'total_pairs': len(particles),
+        'creation_times': creation_times,
+        'mean_creation_time': float(np.mean(creation_times)) if creation_times else 0.0,
+        'std_creation_time': float(np.std(creation_times)) if creation_times else 0.0,
+        'first_3_pairs': [
+            {
+                'particle': p[0],
+                'antiparticle': p[1]
+            } for p in particles[:3]
+        ]
+    }
+
+def _simulate_entanglement_config(config):
+    """Вспомогательная функция для параллельного выполнения анализа запутанности"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=config['num_qubits'], 
+                          entanglement_strength=config['strength'])
+    initial_ent = system.get_entanglement_entropy()
+    
+    system.apply_entanglement_operator(config['pairs'])
+    final_ent = system.get_entanglement_entropy()
+    
+    qubit_probs = {
+        i: system.get_qubit_probabilities(i) 
+        for i in range(system.n)
+    }
+    
+    return {
+        'num_qubits': config['num_qubits'],
+        'entanglement_pairs': config['pairs'],
+        'entanglement_strength': config['strength'],
+        'initial_entanglement': float(initial_ent),
+        'final_entanglement': float(final_ent),
+        'coherence': float(system.get_coherence()),
+        'qubit_probabilities': {
+            str(k): {'prob_0': float(v[0]), 'prob_1': float(v[1])}
+            for k, v in qubit_probs.items()
+        }
+    }
+
+def _simulate_measurement_config(config):
+    """Вспомогательная функция для параллельного выполнения статистики измерений"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=config['num_qubits'])
+    system.apply_entanglement_operator(config['pairs'])
+    
+    stats_per_qubit = {}
+    for i in range(system.n):
+        stats = system.collect_measurement_statistics(i, config['num_measurements'])
+        stats_per_qubit[f'qubit_{i}'] = {
+            'count_0': stats['count_0'],
+            'count_1': stats['count_1'],
+            'prob_0': float(stats['prob_0']),
+            'prob_1': float(stats['prob_1']),
+            'num_measurements': stats['num_measurements']
+        }
+    
+    return {
+        'num_qubits': config['num_qubits'],
+        'entanglement_pairs': config['pairs'],
+        'num_measurements': config['num_measurements'],
+        'measurement_stats': stats_per_qubit,
+        'coherence': float(system.get_coherence()),
+        'entanglement_entropy': float(system.get_entanglement_entropy())
+    }
+
+def _simulate_large_system(num_qubits):
+    """Вспомогательная функция для параллельного выполнения больших систем"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
+    max_pairs = min(30, num_qubits - 1)
+    pairs = [(i, i+1) for i in range(max_pairs)]
+    system.apply_entanglement_operator(pairs)
+    
+    return {
+        'num_qubits': num_qubits,
+        'entanglement_pairs': len(pairs),
+        'entanglement_entropy': float(system.get_entanglement_entropy()),
+        'coherence': float(system.get_coherence())
+    }
+
+def _simulate_strength_sweep(strength):
+    """Вспомогательная функция для sweep по силе запутанности"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=2, entanglement_strength=strength)
+    system.apply_entanglement_operator([(0, 1)])
+    
+    return {
+        'entanglement_strength': float(strength),
+        'entanglement_entropy': float(system.get_entanglement_entropy()),
+        'coherence': float(system.get_coherence()),
+        'prob_0_qubit0': float(system.get_qubit_probabilities(0)[0]),
+        'prob_1_qubit0': float(system.get_qubit_probabilities(0)[1]),
+        'prob_0_qubit1': float(system.get_qubit_probabilities(1)[0]),
+        'prob_1_qubit1': float(system.get_qubit_probabilities(1)[1])
+    }
+
+def _simulate_qubit_count_sweep(num_qubits):
+    """Вспомогательная функция для sweep по количеству кубитов"""
+    from reality_sim import QuantumFabric
+    
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
+    pairs = [(i, i+1) for i in range(num_qubits - 1)]
+    system.apply_entanglement_operator(pairs)
+    
+    return {
+        'num_qubits': num_qubits,
+        'entanglement_pairs': len(pairs),
+        'entanglement_entropy': float(system.get_entanglement_entropy()),
+        'coherence': float(system.get_coherence())
+    }
+
+def _simulate_multi_qubit_strength(args):
+    """Вспомогательная функция для sweep силы запутанности для разных систем"""
+    from reality_sim import QuantumFabric
+    num_qubits, strength = args
+    
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength)
+    pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]
+    system.apply_entanglement_operator(pairs)
+    
+    return {
+        'num_qubits': num_qubits,
+        'entanglement_strength': float(strength),
+        'entanglement_entropy': float(system.get_entanglement_entropy()),
+        'coherence': float(system.get_coherence())
+    }
+
 def demo_basic_quantum_system():
     """Демонстрация базовой квантовой системы с расширенным анализом"""
     print("=== Базовая квантовая система ===")
@@ -72,58 +276,36 @@ def demo_basic_quantum_system():
             'entanglement_strength': 1.0
         })
     
-    for config_idx, config in enumerate(basic_systems_configs):
-        print(f"\n--- Система {config_idx + 1}/{len(basic_systems_configs)} ---")
-        system = QuantumFabric(num_qubits=config['num_qubits'], 
-                              entanglement_strength=config['entanglement_strength'])
-        initial_info = {
-            'num_qubits': system.n,
-            'entanglement_strength': system.entanglement_strength,
-            'initial_coherence': system.get_coherence(),
-            'initial_entanglement': system.get_entanglement_entropy()
-        }
-        print(system.get_state_info())
-        
-        # Добавляем запутанность (все соседние пары)
-        pairs = [(i, i+1) for i in range(system.n - 1)]
-        system.apply_entanglement_operator(pairs)
-        after_entanglement_info = {
-            'coherence': system.get_coherence(),
-            'entanglement_entropy': system.get_entanglement_entropy(),
-            'state_info': system.get_state_info(),
-            'entanglement_pairs': pairs
-        }
-        print(f"После запутывания ({pairs}):", system.get_state_info())
-        
-        # Собираем статистику измерений для всех кубитов
-        print(f"\n--- Статистика измерений (10000 измерений на кубит) ---")
-        all_stats = {}
-        for i in range(system.n):
-            stats = system.collect_measurement_statistics(i, 10000)
-            all_stats[f'qubit_{i}'] = stats
-            if config_idx < 3:  # Показываем детали только для первых 3 систем
-                print(f"Кубит {i}: |0> = {stats['count_0']} ({stats['prob_0']:.3f}), |1> = {stats['count_1']} ({stats['prob_1']:.3f})")
-        
-        # Вероятности для всех кубитов
-        print("\n--- Вероятности для всех кубитов ---")
-        qubit_probs = {}
-        for i in range(system.n):
-            prob_0, prob_1 = system.get_qubit_probabilities(i)
-            qubit_probs[f'qubit_{i}'] = (prob_0, prob_1)
-            print(f"Кубит {i}: P(|0>) = {prob_0:.4f}, P(|1>) = {prob_1:.4f}")
-        
-        # Сохраняем данные
-        simulation_data['quantum_systems'].append({
-            **initial_info,
-            **after_entanglement_info,
-            'measurement_stats': all_stats,
-            'qubit_probabilities': {
-                k: {'prob_0': float(v[0]), 'prob_1': float(v[1])}
-                for k, v in qubit_probs.items()
-            }
-        })
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(basic_systems_configs)} конфигураций...")
     
-    return system
+    # Параллельное выполнение
+    results = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_basic_system, config): idx 
+                   for idx, config in enumerate(basic_systems_configs)}
+        
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 10 == 0 or completed == len(basic_systems_configs):
+                print(f"  Обработано {completed}/{len(basic_systems_configs)} систем...")
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                config_idx = futures[future]
+                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
+    
+    # Показываем детали для первых 3 систем
+    print("\n--- Детали первых 3 систем ---")
+    for idx, result in enumerate(results[:3]):
+        print(f"\nСистема {idx + 1}: {result['num_qubits']} кубитов")
+        print(f"  Запутанность: {result['initial_entanglement']:.4f} → {result['entanglement_entropy']:.4f}")
+        print(f"  Когерентность: {result['coherence']:.6f}")
+    
+    simulation_data['quantum_systems'].extend(results)
+    
+    return results[0] if results else None
 
 def demo_particle_creation():
     """Демонстрация рождения частиц из вакуума с расширенной статистикой"""
@@ -133,36 +315,30 @@ def demo_particle_creation():
     vacuum_energies = np.linspace(0.01, 0.6, 30)  # 30 значений энергии
     time_steps_range = list(range(20, 501, 20))  # От 20 до 500 с шагом 20 = 25 значений
     
-    all_particles_data = []
+    # Создаем список всех комбинаций параметров
+    param_combinations = [(vacuum_energy, time_steps) 
+                          for vacuum_energy in vacuum_energies 
+                          for time_steps in time_steps_range]
     
-    for vacuum_energy in vacuum_energies:
-        for time_steps in time_steps_range:
-            particles = EmergentLaws.simulate_particle_creation(
-                vacuum_energy=vacuum_energy, 
-                time_steps=time_steps
-            )
-            
-            # Статистика по времени создания
-            creation_times = [p[0]['created_at'] for p in particles]
-            
-            particle_data = {
-                'vacuum_energy': vacuum_energy,
-                'time_steps': time_steps,
-                'total_pairs': len(particles),
-                'creation_times': creation_times,
-                'mean_creation_time': np.mean(creation_times) if creation_times else 0,
-                'std_creation_time': np.std(creation_times) if creation_times else 0,
-                'first_3_pairs': [
-                    {
-                        'particle': p[0],
-                        'antiparticle': p[1]
-                    } for p in particles[:3]
-                ]
-            }
-            all_particles_data.append(particle_data)
-            
-            if len(all_particles_data) % 100 == 0:  # Показываем прогресс каждые 100 симуляций
-                print(f"Выполнено {len(all_particles_data)}/{len(vacuum_energies) * len(time_steps_range)} симуляций...")
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(param_combinations)} симуляций...")
+    
+    # Параллельное выполнение
+    all_particles_data = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_particle_creation, args): args 
+                   for args in param_combinations}
+        
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 100 == 0:
+                print(f"  Выполнено {completed}/{len(param_combinations)} симуляций...")
+            try:
+                result = future.result()
+                all_particles_data.append(result)
+            except Exception as e:
+                args = futures[future]
+                print(f"  Ошибка при обработке (energy={args[0]}, steps={args[1]}): {e}")
     
     print(f"\nВсего выполнено {len(all_particles_data)} симуляций рождения частиц")
     print(f"Энергии вакуума: {len(vacuum_energies)} значений")
@@ -391,39 +567,25 @@ def demo_entanglement_analysis():
             pairs = [(i, i+1) for i in range(0, min(20, num_qubits-1))]  # Первые 20 пар
             configurations.append({'num_qubits': num_qubits, 'pairs': pairs, 'strength': 1.0})
     
-    entanglement_data = []
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(configurations)} конфигураций...")
     
-    print(f"Выполняется анализ {len(configurations)} конфигураций...")
-    for idx, config in enumerate(configurations):
-        if (idx + 1) % 5 == 0:
-            print(f"  Обработано {idx + 1}/{len(configurations)} конфигураций...")
-            
-        system = QuantumFabric(num_qubits=config['num_qubits'], 
-                              entanglement_strength=config['strength'])
-        initial_ent = system.get_entanglement_entropy()
+    # Параллельное выполнение
+    entanglement_data = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_entanglement_config, config): idx 
+                   for idx, config in enumerate(configurations)}
         
-        system.apply_entanglement_operator(config['pairs'])
-        final_ent = system.get_entanglement_entropy()
-        
-        # Вероятности для всех кубитов
-        qubit_probs = {
-            i: system.get_qubit_probabilities(i) 
-            for i in range(system.n)
-        }
-        
-        data = {
-            'num_qubits': config['num_qubits'],
-            'entanglement_pairs': config['pairs'],
-            'entanglement_strength': config['strength'],
-            'initial_entanglement': float(initial_ent),
-            'final_entanglement': float(final_ent),
-            'coherence': float(system.get_coherence()),
-            'qubit_probabilities': {
-                str(k): {'prob_0': float(v[0]), 'prob_1': float(v[1])}
-                for k, v in qubit_probs.items()
-            }
-        }
-        entanglement_data.append(data)
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 20 == 0 or completed == len(configurations):
+                print(f"  Обработано {completed}/{len(configurations)} конфигураций...")
+            try:
+                result = future.result()
+                entanglement_data.append(result)
+            except Exception as e:
+                config_idx = futures[future]
+                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
     
     print(f"\nПоказаны результаты для первых 5 конфигураций:")
     for config, data in zip(configurations[:5], entanglement_data[:5]):
@@ -439,22 +601,29 @@ def demo_parameter_sweep():
     
     # Значительно расширенный sweep по силе запутанности
     entanglement_strengths = np.linspace(0.01, 1.0, 200)  # 200 точек
-    sweep_data = []
     
-    print(f"Выполняется sweep по {len(entanglement_strengths)} значениям силы запутанности...")
-    for strength in entanglement_strengths:
-        system = QuantumFabric(num_qubits=2, entanglement_strength=strength)
-        system.apply_entanglement_operator([(0, 1)])
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(entanglement_strengths)} значений...")
+    
+    # Параллельное выполнение
+    sweep_data = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_strength_sweep, strength): strength 
+                   for strength in entanglement_strengths}
         
-        sweep_data.append({
-            'entanglement_strength': float(strength),
-            'entanglement_entropy': float(system.get_entanglement_entropy()),
-            'coherence': float(system.get_coherence()),
-            'prob_0_qubit0': float(system.get_qubit_probabilities(0)[0]),
-            'prob_1_qubit0': float(system.get_qubit_probabilities(0)[1]),
-            'prob_0_qubit1': float(system.get_qubit_probabilities(1)[0]),
-            'prob_1_qubit1': float(system.get_qubit_probabilities(1)[1])
-        })
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 50 == 0:
+                print(f"  Обработано {completed}/{len(entanglement_strengths)} значений...")
+            try:
+                result = future.result()
+                sweep_data.append(result)
+            except Exception as e:
+                strength = futures[future]
+                print(f"  Ошибка при обработке strength={strength}: {e}")
+    
+    # Сортируем по силе запутанности
+    sweep_data.sort(key=lambda x: x['entanglement_strength'])
     
     print("Сила запутанности → Энтропия запутанности (выборочно):")
     for entry in sweep_data[::10]:  # Показываем каждую 10-ю точку
@@ -470,20 +639,27 @@ def demo_parameter_sweep():
     # От 2 до 50 кубитов, с разной частотой для больших систем
     qubit_counts = list(range(2, 21))  # От 2 до 20 - все
     qubit_counts.extend(range(25, 51, 5))  # От 25 до 50 - каждые 5
-    qubit_sweep_data = []
     
-    for num_qubits in qubit_counts:
-        # Создаем максимальную запутанность (все пары соседних кубитов)
-        system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
-        pairs = [(i, i+1) for i in range(num_qubits - 1)]
-        system.apply_entanglement_operator(pairs)
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(qubit_counts)} значений...")
+    
+    # Параллельное выполнение
+    qubit_sweep_data = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_qubit_count_sweep, num_qubits): num_qubits 
+                   for num_qubits in qubit_counts}
         
-        qubit_sweep_data.append({
-            'num_qubits': num_qubits,
-            'entanglement_pairs': len(pairs),
-            'entanglement_entropy': float(system.get_entanglement_entropy()),
-            'coherence': float(system.get_coherence())
-        })
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            try:
+                result = future.result()
+                qubit_sweep_data.append(result)
+            except Exception as e:
+                num_qubits = futures[future]
+                print(f"  Ошибка при обработке {num_qubits} кубитов: {e}")
+    
+    # Сортируем по количеству кубитов
+    qubit_sweep_data.sort(key=lambda x: x['num_qubits'])
     
     print("Количество кубитов → Энтропия запутанности:")
     for entry in qubit_sweep_data:
@@ -496,33 +672,37 @@ def demo_parameter_sweep():
     
     # Дополнительный sweep по силе запутанности для разных количеств кубитов
     print("\n=== Sweep силы запутанности для разных систем ===")
-    multi_qubit_sweep = []
+    
+    # Создаем список всех комбинаций
+    multi_qubit_params = []
     # Для малых систем - детальный sweep
     for num_qubits in [2, 3, 4, 5]:
         for strength in np.linspace(0.1, 1.0, 50):
-            system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength)
-            pairs = [(i, i+1) for i in range(num_qubits - 1)]
-            system.apply_entanglement_operator(pairs)
-            
-            multi_qubit_sweep.append({
-                'num_qubits': num_qubits,
-                'entanglement_strength': float(strength),
-                'entanglement_entropy': float(system.get_entanglement_entropy()),
-                'coherence': float(system.get_coherence())
-            })
+            multi_qubit_params.append((num_qubits, strength))
     # Для больших систем - только несколько значений силы
     for num_qubits in [10, 20, 30, 40, 50]:
         for strength in [0.25, 0.5, 0.75, 1.0]:
-            system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength)
-            pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]  # Ограничиваем количество пар для больших систем
-            system.apply_entanglement_operator(pairs)
-            
-            multi_qubit_sweep.append({
-                'num_qubits': num_qubits,
-                'entanglement_strength': float(strength),
-                'entanglement_entropy': float(system.get_entanglement_entropy()),
-                'coherence': float(system.get_coherence())
-            })
+            multi_qubit_params.append((num_qubits, strength))
+    
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(multi_qubit_params)} комбинаций...")
+    
+    # Параллельное выполнение
+    multi_qubit_sweep = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_multi_qubit_strength, args): args 
+                   for args in multi_qubit_params}
+        
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 50 == 0:
+                print(f"  Обработано {completed}/{len(multi_qubit_params)} комбинаций...")
+            try:
+                result = future.result()
+                multi_qubit_sweep.append(result)
+            except Exception as e:
+                args = futures[future]
+                print(f"  Ошибка при обработке (qubits={args[0]}, strength={args[1]}): {e}")
     
     simulation_data['parameter_sweeps'].append({
         'type': 'multi_qubit_strength',
@@ -580,41 +760,41 @@ def demo_multi_measurement_statistics():
             'pairs': pairs
         })
     
-    measurement_data = []
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(measurement_configs)} конфигураций...")
     
-    print(f"Выполняется {len(measurement_configs)} конфигураций измерений...")
-    for idx, config in enumerate(measurement_configs):
-        if (idx + 1) % 10 == 0:
-            print(f"  Обработано {idx + 1}/{len(measurement_configs)} конфигураций...")
-            
-        system = QuantumFabric(num_qubits=config['num_qubits'])
-        system.apply_entanglement_operator(config['pairs'])
+    # Параллельное выполнение
+    measurement_data = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_measurement_config, config): idx 
+                   for idx, config in enumerate(measurement_configs)}
         
-        stats_per_qubit = {}
-        for i in range(system.n):
-            stats = system.collect_measurement_statistics(i, config['num_measurements'])
-            stats_per_qubit[f'qubit_{i}'] = stats
-        
-        measurement_data.append({
-            'num_qubits': config['num_qubits'],
-            'entanglement_pairs': config['pairs'],
-            'num_measurements': config['num_measurements'],
-            'measurement_stats': stats_per_qubit,
-            'coherence': float(system.get_coherence()),
-            'entanglement_entropy': float(system.get_entanglement_entropy())
-        })
-        
-        if idx < 5:  # Показываем детали только для первых 5
-            print(f"\n{config['num_qubits']} кубитов, {config['num_measurements']} измерений:")
-            for i in range(system.n):
-                stats = stats_per_qubit[f'qubit_{i}']
-                print(f"  Кубит {i}: P(|0>)={stats['prob_0']:.4f}, P(|1>)={stats['prob_1']:.4f}")
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 10 == 0 or completed == len(measurement_configs):
+                print(f"  Обработано {completed}/{len(measurement_configs)} конфигураций...")
+            try:
+                result = future.result()
+                measurement_data.append(result)
+                
+                if completed <= 5:  # Показываем детали только для первых 5
+                    print(f"\n{result['num_qubits']} кубитов, {result['num_measurements']} измерений:")
+                    for i in range(result['num_qubits']):
+                        stats = result['measurement_stats'][f'qubit_{i}']
+                        print(f"  Кубит {i}: P(|0>)={stats['prob_0']:.4f}, P(|1>)={stats['prob_1']:.4f}")
+            except Exception as e:
+                config_idx = futures[future]
+                print(f"  Ошибка при обработке конфигурации {config_idx}: {e}")
     
     simulation_data['measurement_statistics'].extend(measurement_data)
 
 if __name__ == "__main__":
     print("=" * 60)
     print("РАСШИРЕННАЯ СИМУЛЯЦИЯ КВАНТОВОЙ ЭМЕРДЖЕНТНОСТИ")
+    print("=" * 60)
+    print(f"⚡ Параллелизация: используется {NUM_WORKERS} ядер CPU")
+    print("⚠ Внимание: Симуляции расширены до 50 кубитов.")
+    print("   Для больших систем вычисления могут занять больше времени.")
     print("=" * 60)
     
     demo_basic_quantum_system()
@@ -636,26 +816,29 @@ if __name__ == "__main__":
     # Анализ систем от 10 до 50 кубитов
     large_qubit_counts = list(range(10, 21)) + list(range(25, 51, 5))  # 10-20 все, 25-50 каждые 5
     
-    print(f"Анализ {len(large_qubit_counts)} больших систем...")
-    for idx, num_qubits in enumerate(large_qubit_counts):
-        if (idx + 1) % 5 == 0:
-            print(f"  Обработано {idx + 1}/{len(large_qubit_counts)} систем...")
-            
-        system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
-        # Для больших систем ограничиваем количество пар запутанности
-        max_pairs = min(30, num_qubits - 1)
-        pairs = [(i, i+1) for i in range(max_pairs)]
-        system.apply_entanglement_operator(pairs)
+    print(f"Используется {NUM_WORKERS} параллельных процессов для {len(large_qubit_counts)} больших систем...")
+    
+    # Параллельное выполнение
+    large_systems = []
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(_simulate_large_system, num_qubits): num_qubits 
+                   for num_qubits in large_qubit_counts}
         
-        large_systems.append({
-            'num_qubits': num_qubits,
-            'entanglement_pairs': len(pairs),
-            'entanglement_entropy': float(system.get_entanglement_entropy()),
-            'coherence': float(system.get_coherence())
-        })
-        
-        if idx < 5 or (idx + 1) % 5 == 0:  # Показываем первые 5 и каждую 5-ю
-            print(f"{num_qubits} кубитов ({len(pairs)} пар): энтропия = {large_systems[-1]['entanglement_entropy']:.4f}")
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 5 == 0 or completed == len(large_qubit_counts):
+                print(f"  Обработано {completed}/{len(large_qubit_counts)} систем...")
+            try:
+                result = future.result()
+                large_systems.append(result)
+                
+                if completed <= 5 or completed % 5 == 0:
+                    print(f"{result['num_qubits']} кубитов ({result['entanglement_pairs']} пар): "
+                          f"энтропия = {result['entanglement_entropy']:.4f}")
+            except Exception as e:
+                num_qubits = futures[future]
+                print(f"  Ошибка при обработке системы с {num_qubits} кубитами: {e}")
     
     simulation_data['quantum_systems'].extend(large_systems)
     
