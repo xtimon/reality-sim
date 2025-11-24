@@ -101,8 +101,11 @@ def _simulate_basic_system(config):
             'skipped': True
         }
     
+    # Используем GPU для больших систем (если доступен)
+    use_gpu = config.get('use_gpu', None) if num_qubits >= 15 else False
     system = QuantumFabric(num_qubits=num_qubits, 
-                          entanglement_strength=config['entanglement_strength'])
+                          entanglement_strength=config['entanglement_strength'],
+                          use_gpu=use_gpu)
     initial_info = {
         'num_qubits': system.n,
         'entanglement_strength': system.entanglement_strength,
@@ -182,8 +185,11 @@ def _simulate_entanglement_config(config):
             'skipped': True
         }
     
+    # Используем GPU для больших систем (если доступен)
+    use_gpu = None if num_qubits >= 15 else False
     system = QuantumFabric(num_qubits=num_qubits, 
-                          entanglement_strength=config['strength'])
+                          entanglement_strength=config['strength'],
+                          use_gpu=use_gpu)
     initial_ent = system.get_entanglement_entropy()
     
     system.apply_entanglement_operator(config['pairs'])
@@ -220,7 +226,9 @@ def _simulate_measurement_config(config):
             'skipped': True
         }
     
-    system = QuantumFabric(num_qubits=num_qubits)
+    # Используем GPU для больших систем (если доступен)
+    use_gpu = None if num_qubits >= 15 else False
+    system = QuantumFabric(num_qubits=num_qubits, use_gpu=use_gpu)
     system.apply_entanglement_operator(config['pairs'])
     
     stats_per_qubit = {}
@@ -255,7 +263,8 @@ def _simulate_large_system(num_qubits):
             'skipped': True
         }
     
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
+    # Для больших систем используем GPU если доступен
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=None)
     max_pairs = min(30, num_qubits - 1)
     pairs = [(i, i+1) for i in range(max_pairs)]
     system.apply_entanglement_operator(pairs)
@@ -296,7 +305,9 @@ def _simulate_qubit_count_sweep(num_qubits):
             'skipped': True
         }
     
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0)
+    # Используем GPU для больших систем
+    use_gpu = None if num_qubits >= 15 else False
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=use_gpu)
     pairs = [(i, i+1) for i in range(num_qubits - 1)]
     system.apply_entanglement_operator(pairs)
     
@@ -320,7 +331,9 @@ def _simulate_multi_qubit_strength(args):
             'skipped': True
         }
     
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength)
+    # Используем GPU для больших систем
+    use_gpu = None if num_qubits >= 15 else False
+    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength, use_gpu=use_gpu)
     pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]
     system.apply_entanglement_operator(pairs)
     
@@ -923,6 +936,20 @@ if __name__ == "__main__":
     print("РАСШИРЕННАЯ СИМУЛЯЦИЯ КВАНТОВОЙ ЭМЕРДЖЕНТНОСТИ")
     print("=" * 60)
     print(f"⚡ Параллелизация: используется {NUM_WORKERS} ядер CPU")
+    
+    # Проверка GPU
+    try:
+        from reality_sim.core.gpu_backend import is_gpu_available, get_device_info
+        gpu_info = get_device_info()
+        if gpu_info.get('cuda_available'):
+            print(f"🎮 GPU: доступен ({gpu_info.get('gpu_name', 'NVIDIA GPU')})")
+            print(f"   Системы с ≥15 кубитами будут использовать GPU для ускорения")
+        else:
+            print(f"💻 GPU: недоступен (используется CPU)")
+            print(f"   Для использования GPU установите: pip install cupy-cuda12x")
+    except:
+        print(f"💻 GPU: недоступен (используется CPU)")
+    
     print(f"⚠ Внимание: Максимальное количество кубитов для полных симуляций: {MAX_QUBITS_FULL_SIMULATION}")
     print(f"   Системы с >{MAX_QUBITS_FULL_SIMULATION} кубитами будут пропущены из-за требований памяти.")
     mem_30 = estimate_memory_requirement(30) / (1024**3)

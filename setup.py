@@ -10,5 +10,13 @@ setup(
         "scipy>=1.7.0",
         "matplotlib>=3.5.0",  # Для визуализации
     ],
+    extras_require={
+        "gpu": [
+            "cupy-cuda12x>=12.0.0",  # Для NVIDIA GPU с CUDA 12.x
+            # Или для других версий CUDA:
+            # "cupy-cuda11x>=11.0.0",  # Для CUDA 11.x
+            # "cupy-cuda10x>=10.0.0",  # Для CUDA 10.x
+        ],
+    },
     python_requires=">=3.9",
 )

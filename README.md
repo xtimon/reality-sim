@@ -27,7 +27,7 @@ pip install numpy scipy matplotlib
 ```python
 from reality_sim import QuantumFabric, EmergentLaws, HUMAN_OBSERVER
 
-# Создание квантовой системы
+# Создание квантовой системы (автоматически использует GPU если доступен)
 system = QuantumFabric(num_qubits=3)
 print(system.get_state_info())
 
@@ -49,6 +49,10 @@ print(f"Создано {len(particles)} пар частица-античасти
 # Влияние наблюдателя
 coherence = HUMAN_OBSERVER.observe_system(1.0, observation_time=1.0)
 print(f"Сохраненная когерентность: {coherence:.2e}")
+
+# Использование GPU (если доступен)
+system_gpu = QuantumFabric(num_qubits=20, use_gpu=True)
+print(f"Система на GPU: {system_gpu.get_state_info()}")
 ```
 
 ## Структура проекта
@@ -69,10 +73,14 @@ reality_sim/
 
 Класс для работы с квантовыми системами:
 
-- `__init__(num_qubits, entanglement_strength)`: Создание системы из n кубитов
+- `__init__(num_qubits, entanglement_strength, use_gpu=None)`: Создание системы из n кубитов
+  - `use_gpu=None`: Автоопределение (использует GPU если доступен для систем ≥15 кубитов)
+  - `use_gpu=True`: Принудительное использование GPU
+  - `use_gpu=False`: Принудительное использование CPU
 - `apply_entanglement_operator(qubit_pairs)`: Создание запутанности между кубитами
 - `measure(qubit_index)`: Измерение кубита с коллапсом состояния
 - `get_state_info()`: Информация о текущем состоянии
+- **GPU поддержка**: Автоматически использует GPU для больших систем (если CuPy установлен)
 
 ### EmergentLaws
 
@@ -159,6 +167,20 @@ python analyze_simulation.py
 - numpy >= 1.21.0
 - scipy >= 1.7.0
 - matplotlib >= 3.5.0 (опционально, для визуализации)
+
+### GPU поддержка (опционально)
+
+Для ускорения вычислений на GPU (NVIDIA):
+
+```bash
+# Установка CuPy для CUDA 12.x
+pip install cupy-cuda12x
+
+# Или установите с extras
+pip install -e .[gpu]
+```
+
+См. [GPU_SETUP.md](GPU_SETUP.md) для подробной инструкции по настройке GPU.
 
 ## Физические основы
 
