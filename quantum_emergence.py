@@ -90,22 +90,23 @@ def save_decoherence_to_csv(filename: str = 'decoherence_data.csv'):
 # Вспомогательные функции для параллелизации
 def _simulate_basic_system(config):
     """Вспомогательная функция для параллельного выполнения базовой симуляции"""
-    from reality_sim import QuantumFabric
-    
-    num_qubits = config['num_qubits']
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
-        return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
-            'num_qubits': num_qubits,
-            'skipped': True
-        }
-    
-    # Используем GPU для больших систем (если доступен)
-    use_gpu = config.get('use_gpu', None) if num_qubits >= 15 else False
-    system = QuantumFabric(num_qubits=num_qubits, 
-                          entanglement_strength=config['entanglement_strength'],
-                          use_gpu=use_gpu)
+    try:
+        from reality_sim import QuantumFabric
+        
+        num_qubits = config['num_qubits']
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Используем GPU для больших систем (если доступен)
+        use_gpu = config.get('use_gpu', None) if num_qubits >= 15 else False
+        system = QuantumFabric(num_qubits=num_qubits, 
+                              entanglement_strength=config['entanglement_strength'],
+                              use_gpu=use_gpu)
     initial_info = {
         'num_qubits': system.n,
         'entanglement_strength': system.entanglement_strength,
@@ -138,211 +139,283 @@ def _simulate_basic_system(config):
         prob_0, prob_1 = system.get_qubit_probabilities(i)
         qubit_probs[f'qubit_{i}'] = {'prob_0': float(prob_0), 'prob_1': float(prob_1)}
     
-    return {
-        **initial_info,
-        **after_entanglement_info,
-        'measurement_stats': all_stats,
-        'qubit_probabilities': qubit_probs
-    }
+        return {
+            **initial_info,
+            **after_entanglement_info,
+            'measurement_stats': all_stats,
+            'qubit_probabilities': qubit_probs
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'num_qubits': config.get('num_qubits', 'unknown'),
+            'skipped': True
+        }
 
 def _simulate_particle_creation(args):
     """Вспомогательная функция для параллельного выполнения симуляции рождения частиц"""
-    from reality_sim import EmergentLaws
-    vacuum_energy, time_steps = args
-    
-    particles = EmergentLaws.simulate_particle_creation(
-        vacuum_energy=vacuum_energy, 
-        time_steps=time_steps
-    )
-    
-    creation_times = [p[0]['created_at'] for p in particles]
-    
-    return {
-        'vacuum_energy': float(vacuum_energy),
-        'time_steps': time_steps,
-        'total_pairs': len(particles),
-        'creation_times': creation_times,
-        'mean_creation_time': float(np.mean(creation_times)) if creation_times else 0.0,
-        'std_creation_time': float(np.std(creation_times)) if creation_times else 0.0,
-        'first_3_pairs': [
-            {
-                'particle': p[0],
-                'antiparticle': p[1]
-            } for p in particles[:3]
-        ]
-    }
+    try:
+        from reality_sim import EmergentLaws
+        vacuum_energy, time_steps = args
+        
+        particles = EmergentLaws.simulate_particle_creation(
+            vacuum_energy=vacuum_energy, 
+            time_steps=time_steps
+        )
+        
+        creation_times = [p[0]['created_at'] for p in particles]
+        
+        return {
+            'vacuum_energy': float(vacuum_energy),
+            'time_steps': time_steps,
+            'total_pairs': len(particles),
+            'creation_times': creation_times,
+            'mean_creation_time': float(np.mean(creation_times)) if creation_times else 0.0,
+            'std_creation_time': float(np.std(creation_times)) if creation_times else 0.0,
+            'first_3_pairs': [
+                {
+                    'particle': p[0],
+                    'antiparticle': p[1]
+                } for p in particles[:3]
+            ]
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'vacuum_energy': args[0] if args else 'unknown',
+            'time_steps': args[1] if args and len(args) > 1 else 'unknown',
+            'skipped': True
+        }
 
 def _simulate_entanglement_config(config):
     """Вспомогательная функция для параллельного выполнения анализа запутанности"""
-    from reality_sim import QuantumFabric
-    
-    num_qubits = config['num_qubits']
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+    try:
+        from reality_sim import QuantumFabric
+        
+        num_qubits = config['num_qubits']
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Используем GPU для больших систем (если доступен)
+        use_gpu = None if num_qubits >= 15 else False
+        system = QuantumFabric(num_qubits=num_qubits, 
+                              entanglement_strength=config['strength'],
+                              use_gpu=use_gpu)
+        initial_ent = system.get_entanglement_entropy()
+        
+        system.apply_entanglement_operator(config['pairs'])
+        final_ent = system.get_entanglement_entropy()
+        
+        qubit_probs = {
+            i: system.get_qubit_probabilities(i) 
+            for i in range(system.n)
+        }
+        
         return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
-            'num_qubits': num_qubits,
+            'num_qubits': config['num_qubits'],
+            'entanglement_pairs': config['pairs'],
+            'entanglement_strength': config['strength'],
+            'initial_entanglement': float(initial_ent),
+            'final_entanglement': float(final_ent),
+            'coherence': float(system.get_coherence()),
+            'qubit_probabilities': {
+                str(k): {'prob_0': float(v[0]), 'prob_1': float(v[1])}
+                for k, v in qubit_probs.items()
+            }
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'num_qubits': config.get('num_qubits', 'unknown'),
             'skipped': True
         }
-    
-    # Используем GPU для больших систем (если доступен)
-    use_gpu = None if num_qubits >= 15 else False
-    system = QuantumFabric(num_qubits=num_qubits, 
-                          entanglement_strength=config['strength'],
-                          use_gpu=use_gpu)
-    initial_ent = system.get_entanglement_entropy()
-    
-    system.apply_entanglement_operator(config['pairs'])
-    final_ent = system.get_entanglement_entropy()
-    
-    qubit_probs = {
-        i: system.get_qubit_probabilities(i) 
-        for i in range(system.n)
-    }
-    
-    return {
-        'num_qubits': config['num_qubits'],
-        'entanglement_pairs': config['pairs'],
-        'entanglement_strength': config['strength'],
-        'initial_entanglement': float(initial_ent),
-        'final_entanglement': float(final_ent),
-        'coherence': float(system.get_coherence()),
-        'qubit_probabilities': {
-            str(k): {'prob_0': float(v[0]), 'prob_1': float(v[1])}
-            for k, v in qubit_probs.items()
-        }
-    }
 
 def _simulate_measurement_config(config):
     """Вспомогательная функция для параллельного выполнения статистики измерений"""
-    from reality_sim import QuantumFabric
-    
-    num_qubits = config['num_qubits']
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+    try:
+        from reality_sim import QuantumFabric
+        
+        num_qubits = config['num_qubits']
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Используем GPU для больших систем (если доступен)
+        use_gpu = None if num_qubits >= 15 else False
+        system = QuantumFabric(num_qubits=num_qubits, use_gpu=use_gpu)
+        system.apply_entanglement_operator(config['pairs'])
+        
+        stats_per_qubit = {}
+        for i in range(system.n):
+            stats = system.collect_measurement_statistics(i, config['num_measurements'])
+            stats_per_qubit[f'qubit_{i}'] = {
+                'count_0': stats['count_0'],
+                'count_1': stats['count_1'],
+                'prob_0': float(stats['prob_0']),
+                'prob_1': float(stats['prob_1']),
+                'num_measurements': stats['num_measurements']
+            }
+        
         return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
-            'num_qubits': num_qubits,
+            'num_qubits': config['num_qubits'],
+            'entanglement_pairs': config['pairs'],
+            'num_measurements': config['num_measurements'],
+            'measurement_stats': stats_per_qubit,
+            'coherence': float(system.get_coherence()),
+            'entanglement_entropy': float(system.get_entanglement_entropy())
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'num_qubits': config.get('num_qubits', 'unknown'),
             'skipped': True
         }
-    
-    # Используем GPU для больших систем (если доступен)
-    use_gpu = None if num_qubits >= 15 else False
-    system = QuantumFabric(num_qubits=num_qubits, use_gpu=use_gpu)
-    system.apply_entanglement_operator(config['pairs'])
-    
-    stats_per_qubit = {}
-    for i in range(system.n):
-        stats = system.collect_measurement_statistics(i, config['num_measurements'])
-        stats_per_qubit[f'qubit_{i}'] = {
-            'count_0': stats['count_0'],
-            'count_1': stats['count_1'],
-            'prob_0': float(stats['prob_0']),
-            'prob_1': float(stats['prob_1']),
-            'num_measurements': stats['num_measurements']
-        }
-    
-    return {
-        'num_qubits': config['num_qubits'],
-        'entanglement_pairs': config['pairs'],
-        'num_measurements': config['num_measurements'],
-        'measurement_stats': stats_per_qubit,
-        'coherence': float(system.get_coherence()),
-        'entanglement_entropy': float(system.get_entanglement_entropy())
-    }
 
 def _simulate_large_system(num_qubits):
     """Вспомогательная функция для параллельного выполнения больших систем"""
-    from reality_sim import QuantumFabric
-    
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+    try:
+        from reality_sim import QuantumFabric
+        
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Для больших систем используем GPU если доступен
+        system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=None)
+        max_pairs = min(30, num_qubits - 1)
+        pairs = [(i, i+1) for i in range(max_pairs)]
+        system.apply_entanglement_operator(pairs)
+        
         return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'entanglement_pairs': len(pairs),
+            'entanglement_entropy': float(system.get_entanglement_entropy()),
+            'coherence': float(system.get_coherence())
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
             'num_qubits': num_qubits,
             'skipped': True
         }
-    
-    # Для больших систем используем GPU если доступен
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=None)
-    max_pairs = min(30, num_qubits - 1)
-    pairs = [(i, i+1) for i in range(max_pairs)]
-    system.apply_entanglement_operator(pairs)
-    
-    return {
-        'num_qubits': num_qubits,
-        'entanglement_pairs': len(pairs),
-        'entanglement_entropy': float(system.get_entanglement_entropy()),
-        'coherence': float(system.get_coherence())
-    }
 
 def _simulate_strength_sweep(strength):
     """Вспомогательная функция для sweep по силе запутанности"""
-    from reality_sim import QuantumFabric
-    
-    system = QuantumFabric(num_qubits=2, entanglement_strength=strength)
-    system.apply_entanglement_operator([(0, 1)])
-    
-    return {
-        'entanglement_strength': float(strength),
-        'entanglement_entropy': float(system.get_entanglement_entropy()),
-        'coherence': float(system.get_coherence()),
-        'prob_0_qubit0': float(system.get_qubit_probabilities(0)[0]),
-        'prob_1_qubit0': float(system.get_qubit_probabilities(0)[1]),
-        'prob_0_qubit1': float(system.get_qubit_probabilities(1)[0]),
-        'prob_1_qubit1': float(system.get_qubit_probabilities(1)[1])
-    }
+    try:
+        from reality_sim import QuantumFabric
+        
+        system = QuantumFabric(num_qubits=2, entanglement_strength=strength)
+        system.apply_entanglement_operator([(0, 1)])
+        
+        return {
+            'entanglement_strength': float(strength),
+            'entanglement_entropy': float(system.get_entanglement_entropy()),
+            'coherence': float(system.get_coherence()),
+            'prob_0_qubit0': float(system.get_qubit_probabilities(0)[0]),
+            'prob_1_qubit0': float(system.get_qubit_probabilities(0)[1]),
+            'prob_0_qubit1': float(system.get_qubit_probabilities(1)[0]),
+            'prob_1_qubit1': float(system.get_qubit_probabilities(1)[1])
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'entanglement_strength': strength,
+            'skipped': True
+        }
 
 def _simulate_qubit_count_sweep(num_qubits):
     """Вспомогательная функция для sweep по количеству кубитов"""
-    from reality_sim import QuantumFabric
-    
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+    try:
+        from reality_sim import QuantumFabric
+        
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Используем GPU для больших систем
+        use_gpu = None if num_qubits >= 15 else False
+        system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=use_gpu)
+        pairs = [(i, i+1) for i in range(num_qubits - 1)]
+        system.apply_entanglement_operator(pairs)
+        
         return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+            'num_qubits': num_qubits,
+            'entanglement_pairs': len(pairs),
+            'entanglement_entropy': float(system.get_entanglement_entropy()),
+            'coherence': float(system.get_coherence())
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
             'num_qubits': num_qubits,
             'skipped': True
         }
-    
-    # Используем GPU для больших систем
-    use_gpu = None if num_qubits >= 15 else False
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=1.0, use_gpu=use_gpu)
-    pairs = [(i, i+1) for i in range(num_qubits - 1)]
-    system.apply_entanglement_operator(pairs)
-    
-    return {
-        'num_qubits': num_qubits,
-        'entanglement_pairs': len(pairs),
-        'entanglement_entropy': float(system.get_entanglement_entropy()),
-        'coherence': float(system.get_coherence())
-    }
 
 def _simulate_multi_qubit_strength(args):
     """Вспомогательная функция для sweep силы запутанности для разных систем"""
-    from reality_sim import QuantumFabric
-    num_qubits, strength = args
-    
-    if not check_memory_safety(num_qubits):
-        mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+    try:
+        from reality_sim import QuantumFabric
+        num_qubits, strength = args
+        
+        if not check_memory_safety(num_qubits):
+            mem_gb = estimate_memory_requirement(num_qubits) / (1024**3)
+            return {
+                'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
+                'num_qubits': num_qubits,
+                'skipped': True
+            }
+        
+        # Используем GPU для больших систем
+        use_gpu = None if num_qubits >= 15 else False
+        system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength, use_gpu=use_gpu)
+        pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]
+        system.apply_entanglement_operator(pairs)
+        
         return {
-            'error': f'Слишком много кубитов ({num_qubits}). Требуется ~{mem_gb:.1f} GB памяти.',
             'num_qubits': num_qubits,
+            'entanglement_strength': float(strength),
+            'entanglement_entropy': float(system.get_entanglement_entropy()),
+            'coherence': float(system.get_coherence())
+        }
+    except Exception as e:
+        # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+        error_msg = str(e) if e else repr(e)
+        return {
+            'error': error_msg,
+            'num_qubits': args[0] if args else 'unknown',
             'skipped': True
         }
-    
-    # Используем GPU для больших систем
-    use_gpu = None if num_qubits >= 15 else False
-    system = QuantumFabric(num_qubits=num_qubits, entanglement_strength=strength, use_gpu=use_gpu)
-    pairs = [(i, i+1) for i in range(min(20, num_qubits - 1))]
-    system.apply_entanglement_operator(pairs)
-    
-    return {
-        'num_qubits': num_qubits,
-        'entanglement_strength': float(strength),
-        'entanglement_entropy': float(system.get_entanglement_entropy()),
-        'coherence': float(system.get_coherence())
-    }
 
 def demo_basic_quantum_system():
     """Демонстрация базовой квантовой системы с расширенным анализом"""
@@ -394,10 +467,12 @@ def demo_basic_quantum_system():
                     results.append(result)
             except MemoryError as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {str(e)}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {error_msg}")
     
     # Показываем детали для первых 3 систем
     if results:
@@ -443,7 +518,9 @@ def demo_particle_creation():
                 all_particles_data.append(result)
             except Exception as e:
                 args = futures[future]
-                print(f"  Ошибка при обработке (energy={args[0]}, steps={args[1]}): {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  Ошибка при обработке (energy={args[0]}, steps={args[1]}): {error_msg}")
     
     print(f"\nВсего выполнено {len(all_particles_data)} симуляций рождения частиц")
     print(f"Энергии вакуума: {len(vacuum_energies)} значений")
@@ -694,10 +771,12 @@ def demo_entanglement_analysis():
                     entanglement_data.append(result)
             except MemoryError as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {str(e)}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {error_msg}")
     
     print(f"\nПоказаны результаты для первых 5 конфигураций:")
     for config, data in zip(configurations[:5], entanglement_data[:5]):
@@ -732,7 +811,9 @@ def demo_parameter_sweep():
                 sweep_data.append(result)
             except Exception as e:
                 strength = futures[future]
-                print(f"  Ошибка при обработке strength={strength}: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  Ошибка при обработке strength={strength}: {error_msg}")
     
     # Сортируем по силе запутанности
     sweep_data.sort(key=lambda x: x['entanglement_strength'])
@@ -774,10 +855,12 @@ def demo_parameter_sweep():
                     qubit_sweep_data.append(result)
             except MemoryError as e:
                 num_qubits = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке {num_qubits} кубитов: {e}")
+                print(f"  ⚠ Ошибка памяти при обработке {num_qubits} кубитов: {str(e)}")
             except Exception as e:
                 num_qubits = futures[future]
-                print(f"  ⚠ Ошибка при обработке {num_qubits} кубитов: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке {num_qubits} кубитов: {error_msg}")
     
     # Сортируем по количеству кубитов
     qubit_sweep_data.sort(key=lambda x: x['num_qubits'])
@@ -833,10 +916,12 @@ def demo_parameter_sweep():
                     multi_qubit_sweep.append(result)
             except MemoryError as e:
                 args = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке (qubits={args[0]}, strength={args[1]}): {e}")
+                print(f"  ⚠ Ошибка памяти при обработке (qubits={args[0]}, strength={args[1]}): {str(e)}")
             except Exception as e:
                 args = futures[future]
-                print(f"  ⚠ Ошибка при обработке (qubits={args[0]}, strength={args[1]}): {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке (qubits={args[0]}, strength={args[1]}): {error_msg}")
     
     simulation_data['parameter_sweeps'].append({
         'type': 'multi_qubit_strength',
@@ -924,10 +1009,12 @@ def demo_multi_measurement_statistics():
                             print(f"  Кубит {i}: P(|0>)={stats['prob_0']:.4f}, P(|1>)={stats['prob_1']:.4f}")
             except MemoryError as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {e}")
+                print(f"  ⚠ Ошибка памяти при обработке конфигурации {config_idx}: {str(e)}")
             except Exception as e:
                 config_idx = futures[future]
-                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке конфигурации {config_idx}: {error_msg}")
     
     simulation_data['measurement_statistics'].extend(measurement_data)
 
@@ -1003,10 +1090,12 @@ if __name__ == "__main__":
                               f"энтропия = {result['entanglement_entropy']:.4f}")
             except MemoryError as e:
                 num_qubits = futures[future]
-                print(f"  ⚠ Ошибка памяти при обработке системы с {num_qubits} кубитами: {e}")
+                print(f"  ⚠ Ошибка памяти при обработке системы с {num_qubits} кубитами: {str(e)}")
             except Exception as e:
                 num_qubits = futures[future]
-                print(f"  ⚠ Ошибка при обработке системы с {num_qubits} кубитами: {e}")
+                # Преобразуем исключение в строку, чтобы избежать проблем с pickle для PyOpenCL ошибок
+                error_msg = str(e) if e else repr(e)
+                print(f"  ⚠ Ошибка при обработке системы с {num_qubits} кубитами: {error_msg}")
     
     simulation_data['quantum_systems'].extend(large_systems)
     
