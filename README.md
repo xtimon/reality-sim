@@ -82,6 +82,7 @@ reality_sim/
 - `get_state_info()`: Информация о текущем состоянии
 - **GPU поддержка**: Автоматически использует GPU для больших систем
   - NVIDIA GPU через CUDA (CuPy)
+  - AMD/NVIDIA/Intel GPU через Vulkan (vulkpy)
   - AMD/NVIDIA/Intel GPU через OpenCL (PyOpenCL)
 
 ### EmergentLaws
@@ -183,6 +184,15 @@ pip install cupy-cuda12x
 pip install -e .[gpu]
 ```
 
+**AMD/NVIDIA/Intel GPU (Vulkan):**
+```bash
+# Установка vulkpy
+pip install vulkpy
+
+# Или установите с extras
+pip install -e .[vulkan]
+```
+
 **AMD/NVIDIA/Intel GPU (OpenCL):**
 ```bash
 # Установка PyOpenCL
@@ -195,7 +205,7 @@ pip install -e .[opencl]
 pip install -e .[gpu-all]
 ```
 
-Система автоматически выберет лучший доступный backend: CUDA (для NVIDIA) > OpenCL (для AMD/NVIDIA/Intel) > CPU.
+Система автоматически выберет лучший доступный backend: CUDA (для NVIDIA) > Vulkan (для AMD/NVIDIA/Intel) > OpenCL (для AMD/NVIDIA/Intel) > CPU.
 
 См. [GPU_SETUP.md](GPU_SETUP.md) для подробной инструкции по настройке GPU.
 

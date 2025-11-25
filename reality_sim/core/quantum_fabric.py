@@ -63,9 +63,10 @@ class QuantumFabric:
         
     def _initialize_vacuum_state(self):
         """Начальное состояние - вакуум |0>⊗n"""
-        # Для OpenCL создаем на CPU, затем конвертируем
-        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
-        if use_opencl:
+        # Для OpenCL/Vulkan создаем на CPU, затем конвертируем
+        use_gpu_backend = (hasattr(self.backend, 'use_opencl') and self.backend.use_opencl) or \
+                         (hasattr(self.backend, 'use_vulkan') and self.backend.use_vulkan)
+        if use_gpu_backend:
             state_cpu = np.zeros(2**self.n, dtype=complex)
             state_cpu[0] = 1.0
             return self.backend.to_gpu(state_cpu)
@@ -137,9 +138,10 @@ class QuantumFabric:
         """
         size = 2**self.n
         
-        # Для OpenCL создаем оператор на CPU (так как нужен поэлементный доступ)
+        # Для OpenCL/Vulkan создаем оператор на CPU (так как нужен поэлементный доступ)
         # Для CUDA/CPU создаем напрямую
-        use_cpu_for_construction = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        use_cpu_for_construction = (hasattr(self.backend, 'use_opencl') and self.backend.use_opencl) or \
+                                  (hasattr(self.backend, 'use_vulkan') and self.backend.use_vulkan)
         
         if use_cpu_for_construction:
             # Создаем на CPU, затем конвертируем на GPU
@@ -245,8 +247,9 @@ class QuantumFabric:
         size = 2**self.n
         hadamard_matrix = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
         
-        # Для OpenCL создаем оператор на CPU
-        use_cpu_for_construction = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        # Для OpenCL/Vulkan создаем оператор на CPU
+        use_cpu_for_construction = (hasattr(self.backend, 'use_opencl') and self.backend.use_opencl) or \
+                                  (hasattr(self.backend, 'use_vulkan') and self.backend.use_vulkan)
         
         if use_cpu_for_construction:
             operator_cpu = np.eye(size, dtype=complex)
@@ -307,9 +310,10 @@ class QuantumFabric:
         if qubit_index < 0 or qubit_index >= self.n:
             raise ValueError(f"qubit_index должен быть в [0, {self.n-1}], получено {qubit_index}")
         
-        # Для OpenCL конвертируем состояние в CPU для индексирования
-        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
-        if use_opencl:
+        # Для OpenCL/Vulkan конвертируем состояние в CPU для индексирования
+        use_gpu_backend = (hasattr(self.backend, 'use_opencl') and self.backend.use_opencl) or \
+                         (hasattr(self.backend, 'use_vulkan') and self.backend.use_vulkan)
+        if use_gpu_backend:
             state_cpu = self.backend.to_cpu(self.state)
         else:
             state_cpu = self.state
@@ -333,7 +337,7 @@ class QuantumFabric:
                 state_cpu[i] = 0.0
         
         # Конвертируем обратно на GPU если нужно
-        if use_opencl:
+        if use_gpu_backend:
             self.state = self.backend.to_gpu(state_cpu)
         else:
             self.state = state_cpu
@@ -362,9 +366,10 @@ class QuantumFabric:
         Returns:
             Кортеж (вероятность |0>, вероятность |1>)
         """
-        # Для OpenCL конвертируем в CPU для индексирования
-        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
-        if use_opencl:
+        # Для OpenCL/Vulkan конвертируем в CPU для индексирования
+        use_gpu_backend = (hasattr(self.backend, 'use_opencl') and self.backend.use_opencl) or \
+                         (hasattr(self.backend, 'use_vulkan') and self.backend.use_vulkan)
+        if use_gpu_backend:
             state_cpu = self.backend.to_cpu(self.state)
         else:
             state_cpu = self.state

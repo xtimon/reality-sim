@@ -17,11 +17,15 @@ setup(
             # "cupy-cuda11x>=11.0.0",  # Для CUDA 11.x
             # "cupy-cuda10x>=10.0.0",  # Для CUDA 10.x
         ],
+        "vulkan": [
+            "vulkpy>=0.1.0",  # Для AMD/NVIDIA/Intel GPU через Vulkan
+        ],
         "opencl": [
             "pyopencl>=2023.1.0",  # Для AMD/NVIDIA/Intel GPU через OpenCL
         ],
         "gpu-all": [
             "cupy-cuda12x>=12.0.0",
+            "vulkpy>=0.1.0",
             "pyopencl>=2023.1.0",
         ],
     },

@@ -2,9 +2,10 @@
 
 RealitySim поддерживает ускорение вычислений на GPU через:
 - **CuPy** (для NVIDIA видеокарт с CUDA)
+- **vulkpy** (для AMD, NVIDIA и Intel видеокарт с Vulkan)
 - **PyOpenCL** (для AMD, NVIDIA и Intel видеокарт с OpenCL)
 
-Система автоматически выберет лучший доступный backend: CUDA (приоритет) > OpenCL > CPU.
+Система автоматически выберет лучший доступный backend: CUDA (приоритет) > Vulkan > OpenCL > CPU.
 
 ## Установка
 
@@ -35,7 +36,54 @@ pip install cupy-cuda10x
 pip install -e .[gpu]
 ```
 
-### Вариант 2: AMD/NVIDIA/Intel GPU (OpenCL)
+### Вариант 2: AMD/NVIDIA/Intel GPU (Vulkan)
+
+#### 1. Проверка наличия Vulkan
+
+```bash
+# Для Linux
+vulkaninfo  # Может потребоваться установка: sudo pacman -S vulkan-tools (Arch) или sudo apt-get install vulkan-tools (Ubuntu/Debian)
+
+# Для macOS
+# Vulkan поддерживается через MoltenVK
+```
+
+#### 2. Установка vulkpy
+
+```bash
+# Установка vulkpy
+pip install vulkpy
+
+# Или установите с extras
+pip install -e .[vulkan]
+
+# Или установите все GPU зависимости (CUDA + Vulkan + OpenCL)
+pip install -e .[gpu-all]
+```
+
+#### 3. Драйверы для Vulkan
+
+**Linux:**
+- **Mesa (открытый драйвер)** - рекомендуется для большинства случаев
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install mesa-vulkan-drivers vulkan-tools
+  
+  # Fedora
+  sudo dnf install mesa-vulkan-drivers vulkan-tools
+  
+  # Arch Linux
+  sudo pacman -S vulkan-radeon vulkan-tools  # Для AMD
+  sudo pacman -S vulkan-intel vulkan-tools   # Для Intel
+  sudo pacman -S nvidia-utils vulkan-tools  # Для NVIDIA
+  ```
+
+**macOS:**
+- Vulkan поддерживается через MoltenVK (обычно устанавливается с vulkpy)
+
+**Примечание:** Vulkan может быть быстрее OpenCL на некоторых системах, особенно на AMD GPU с Mesa драйверами.
+
+### Вариант 3: AMD/NVIDIA/Intel GPU (OpenCL)
 
 #### 1. Проверка наличия OpenCL
 
@@ -101,6 +149,7 @@ for k, v in info.items():
 
 Вывод покажет:
 - Для NVIDIA: `cuda_available: True`, `cuda_gpu_name`, `cuda_gpu_memory`
+- Для Vulkan: `vulkan_available: True`, `vulkan_device_name`, `vulkan_device_type`
 - Для AMD/OpenCL: `opencl_available: True`, `opencl_platforms` с информацией о платформах и устройствах
 - Для Mesa: в `opencl_platforms` будет указано `is_mesa: True` и название платформы будет содержать "mesa", "clover" или "rusticl"
 
@@ -185,6 +234,45 @@ pip install cupy-cuda12x  # или соответствующая версия
 - Убедитесь, что установлены драйверы NVIDIA
 - Проверьте версию CUDA: `nvcc --version`
 - Установите соответствующую версию CuPy
+
+### AMD/NVIDIA/Intel GPU (Vulkan)
+
+#### vulkpy не найден
+```bash
+pip install vulkpy
+```
+
+#### Vulkan недоступен
+
+**Linux:**
+```bash
+# Ubuntu/Debian
+sudo apt-get install mesa-vulkan-drivers vulkan-tools
+
+# Fedora
+sudo dnf install mesa-vulkan-drivers vulkan-tools
+
+# Arch Linux
+sudo pacman -S vulkan-radeon vulkan-tools  # Для AMD
+sudo pacman -S vulkan-intel vulkan-tools   # Для Intel
+sudo pacman -S nvidia-utils vulkan-tools   # Для NVIDIA
+```
+
+**macOS:**
+- MoltenVK обычно устанавливается автоматически с vulkpy
+
+**Проверка установки:**
+```bash
+# Через vulkaninfo (Linux)
+vulkaninfo
+
+# Или через Python
+python3 -c "
+from reality_sim.core.gpu_backend import get_device_info
+import json
+print(json.dumps(get_device_info(), indent=2, default=str))
+"
+```
 
 ### AMD GPU (OpenCL)
 
