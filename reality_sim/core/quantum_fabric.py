@@ -63,9 +63,16 @@ class QuantumFabric:
         
     def _initialize_vacuum_state(self):
         """Начальное состояние - вакуум |0>⊗n"""
-        state = self.backend.zeros(2**self.n, dtype=complex)
-        state[0] = 1.0  # |000...0>
-        return state
+        # Для OpenCL создаем на CPU, затем конвертируем
+        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        if use_opencl:
+            state_cpu = np.zeros(2**self.n, dtype=complex)
+            state_cpu[0] = 1.0
+            return self.backend.to_gpu(state_cpu)
+        else:
+            state = self.backend.zeros(2**self.n, dtype=complex)
+            state[0] = 1.0  # |000...0>
+            return state
     
     def _normalize_state(self) -> None:
         """Нормализует квантовое состояние"""
@@ -129,7 +136,17 @@ class QuantumFabric:
             Унитарная матрица оператора CNOT
         """
         size = 2**self.n
-        operator = self.backend.zeros((size, size), dtype=complex)
+        
+        # Для OpenCL создаем оператор на CPU (так как нужен поэлементный доступ)
+        # Для CUDA/CPU создаем напрямую
+        use_cpu_for_construction = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        
+        if use_cpu_for_construction:
+            # Создаем на CPU, затем конвертируем на GPU
+            operator_cpu = np.zeros((size, size), dtype=complex)
+        else:
+            operator = self.backend.zeros((size, size), dtype=complex)
+            operator_cpu = None
         
         # CNOT оператор: если control бит = 1, то flip target бит
         # CNOT|xy> = |x, y⊕x>
@@ -139,20 +156,28 @@ class QuantumFabric:
             
             if control_bit == 1:
                 # Если control = 1, флипаем target: y -> y⊕1
-                new_target_bit = target_bit ^ 1
-                # Создаем новое состояние с флипнутым target битом
                 j = i ^ (1 << target)  # Флипаем target бит
-                operator[j, i] = 1.0
+                if use_cpu_for_construction:
+                    operator_cpu[j, i] = 1.0
+                else:
+                    operator[j, i] = 1.0
             else:
                 # Если control = 0, ничего не меняем
-                operator[i, i] = 1.0
+                if use_cpu_for_construction:
+                    operator_cpu[i, i] = 1.0
+                else:
+                    operator[i, i] = 1.0
         
         # Применяем параметр силы запутанности
         # Для частичной запутанности используем контролируемое вращение (CRY gate)
         if self.entanglement_strength < 1.0:
             # Пересоздаем оператор с учетом силы запутанности
-            operator = self.xp.eye(size, dtype=complex)
-            theta = self.xp.pi * self.entanglement_strength  # Угол вращения
+            if use_cpu_for_construction:
+                operator_cpu = np.eye(size, dtype=complex)
+            else:
+                operator = self.xp.eye(size, dtype=complex)
+            
+            theta = np.pi * self.entanglement_strength  # Угол вращения
             
             for i in range(size):
                 control_bit = (i >> control) & 1
@@ -163,20 +188,36 @@ class QuantumFabric:
                     target_state = i ^ (1 << target)  # Состояние с флипнутым target
                     
                     # Контролируемое вращение Y: CRY(θ)
-                    # |1,0> -> cos(θ/2)|1,0> - sin(θ/2)|1,1>
-                    # |1,1> -> sin(θ/2)|1,0> + cos(θ/2)|1,1>
                     if target_bit == 0:
                         # Исходное состояние |1,0>
-                        operator[i, i] = self.xp.cos(theta / 2)
-                        operator[target_state, i] = -self.xp.sin(theta / 2)
+                        cos_val = np.cos(theta / 2)
+                        sin_val = -np.sin(theta / 2)
+                        if use_cpu_for_construction:
+                            operator_cpu[i, i] = cos_val
+                            operator_cpu[target_state, i] = sin_val
+                        else:
+                            operator[i, i] = self.xp.cos(theta / 2)
+                            operator[target_state, i] = -self.xp.sin(theta / 2)
                     else:
                         # Исходное состояние |1,1>
-                        operator[i, i] = self.xp.cos(theta / 2)
-                        source_state = i ^ (1 << target)  # Состояние с флипнутым target
-                        operator[source_state, i] = self.xp.sin(theta / 2)
+                        cos_val = np.cos(theta / 2)
+                        sin_val = np.sin(theta / 2)
+                        if use_cpu_for_construction:
+                            operator_cpu[i, i] = cos_val
+                            operator_cpu[target_state, i] = sin_val
+                        else:
+                            operator[i, i] = self.xp.cos(theta / 2)
+                            operator[target_state, i] = self.xp.sin(theta / 2)
                 else:
                     # Если control = 0, ничего не меняем
-                    operator[i, i] = 1.0
+                    if use_cpu_for_construction:
+                        operator_cpu[i, i] = 1.0
+                    else:
+                        operator[i, i] = 1.0
+        
+        # Конвертируем на GPU если нужно
+        if use_cpu_for_construction:
+            operator = self.backend.asarray(operator_cpu)
         
         # Проверяем унитарность
         if not self._is_unitary(operator, tolerance=1e-6):
@@ -202,10 +243,15 @@ class QuantumFabric:
             raise ValueError(f"qubit_index должен быть в [0, {self.n-1}], получено {qubit_index}")
         
         size = 2**self.n
-        hadamard_matrix = self.backend.array([[1, 1], [1, -1]], dtype=complex) / self.xp.sqrt(2)
+        hadamard_matrix = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
         
-        # Создаем оператор для всего пространства
-        operator = self.xp.eye(size, dtype=complex)
+        # Для OpenCL создаем оператор на CPU
+        use_cpu_for_construction = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        
+        if use_cpu_for_construction:
+            operator_cpu = np.eye(size, dtype=complex)
+        else:
+            operator = self.xp.eye(size, dtype=complex)
         
         # Применяем Hadamard к указанному кубиту
         for i in range(size):
@@ -215,7 +261,14 @@ class QuantumFabric:
                 if (i & mask) == (j & mask):
                     bit_i = (i >> qubit_index) & 1
                     bit_j = (j >> qubit_index) & 1
-                    operator[i, j] = hadamard_matrix[bit_i, bit_j]
+                    if use_cpu_for_construction:
+                        operator_cpu[i, j] = hadamard_matrix[bit_i, bit_j]
+                    else:
+                        operator[i, j] = hadamard_matrix[bit_i, bit_j]
+        
+        # Конвертируем на GPU если нужно
+        if use_cpu_for_construction:
+            operator = self.backend.asarray(operator_cpu)
         
         self.state = operator @ self.state
         self._normalize_state()
@@ -254,15 +307,22 @@ class QuantumFabric:
         if qubit_index < 0 or qubit_index >= self.n:
             raise ValueError(f"qubit_index должен быть в [0, {self.n-1}], получено {qubit_index}")
         
+        # Для OpenCL конвертируем состояние в CPU для индексирования
+        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        if use_opencl:
+            state_cpu = self.backend.to_cpu(self.state)
+        else:
+            state_cpu = self.state
+        
         # Вычисляем вероятности
         prob_0 = 0.0
         prob_1 = 0.0
         
         for i in range(2**self.n):
             if (i >> qubit_index) & 1:
-                prob_1 += float(self.xp.abs(self.state[i])**2)
+                prob_1 += float(np.abs(state_cpu[i])**2)
             else:
-                prob_0 += float(self.xp.abs(self.state[i])**2)
+                prob_0 += float(np.abs(state_cpu[i])**2)
         
         # Коллапс состояния
         result = np.random.choice([0, 1], p=[prob_0, prob_1])
@@ -270,7 +330,13 @@ class QuantumFabric:
         # Проецируем состояние на измеренное значение
         for i in range(2**self.n):
             if ((i >> qubit_index) & 1) != result:
-                self.state[i] = 0.0
+                state_cpu[i] = 0.0
+        
+        # Конвертируем обратно на GPU если нужно
+        if use_opencl:
+            self.state = self.backend.to_gpu(state_cpu)
+        else:
+            self.state = state_cpu
         
         self._normalize_state()
         return result
@@ -296,14 +362,21 @@ class QuantumFabric:
         Returns:
             Кортеж (вероятность |0>, вероятность |1>)
         """
+        # Для OpenCL конвертируем в CPU для индексирования
+        use_opencl = hasattr(self.backend, 'use_opencl') and self.backend.use_opencl
+        if use_opencl:
+            state_cpu = self.backend.to_cpu(self.state)
+        else:
+            state_cpu = self.state
+        
         prob_0 = 0.0
         prob_1 = 0.0
         
         for i in range(2**self.n):
             if (i >> qubit_index) & 1:
-                prob_1 += float(self.xp.abs(self.state[i])**2)
+                prob_1 += float(np.abs(state_cpu[i])**2)
             else:
-                prob_0 += float(self.xp.abs(self.state[i])**2)
+                prob_0 += float(np.abs(state_cpu[i])**2)
         
         return (prob_0, prob_1)
     
@@ -373,7 +446,10 @@ class QuantumFabric:
                                 # Проверяем, что все остальные биты совпадают
                                 mask = ~((1 << i) | (1 << j))
                                 if (k & mask) == (l & mask):
-                                    rho_ij[idx_ij, idx_ij_l] += self.state[k] * np.conj(self.state[l])
+                                    # Для OpenCL конвертируем в CPU
+                                    state_k = float(self.backend.to_cpu(self.state)[k]) if hasattr(self.backend, 'use_opencl') and self.backend.use_opencl else self.state[k]
+                                    state_l = float(self.backend.to_cpu(self.state)[l]) if hasattr(self.backend, 'use_opencl') and self.backend.use_opencl else self.state[l]
+                                    rho_ij[idx_ij, idx_ij_l] += state_k * np.conj(state_l)
                     
                     # Вычисляем редуцированную матрицу плотности для кубита i
                     # (трассируем по кубиту j)

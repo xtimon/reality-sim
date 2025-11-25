@@ -80,7 +80,9 @@ reality_sim/
 - `apply_entanglement_operator(qubit_pairs)`: Создание запутанности между кубитами
 - `measure(qubit_index)`: Измерение кубита с коллапсом состояния
 - `get_state_info()`: Информация о текущем состоянии
-- **GPU поддержка**: Автоматически использует GPU для больших систем (если CuPy установлен)
+- **GPU поддержка**: Автоматически использует GPU для больших систем
+  - NVIDIA GPU через CUDA (CuPy)
+  - AMD/NVIDIA/Intel GPU через OpenCL (PyOpenCL)
 
 ### EmergentLaws
 
@@ -170,8 +172,9 @@ python analyze_simulation.py
 
 ### GPU поддержка (опционально)
 
-Для ускорения вычислений на GPU (NVIDIA):
+RealitySim поддерживает ускорение вычислений на GPU:
 
+**NVIDIA GPU (CUDA):**
 ```bash
 # Установка CuPy для CUDA 12.x
 pip install cupy-cuda12x
@@ -179,6 +182,20 @@ pip install cupy-cuda12x
 # Или установите с extras
 pip install -e .[gpu]
 ```
+
+**AMD/NVIDIA/Intel GPU (OpenCL):**
+```bash
+# Установка PyOpenCL
+pip install pyopencl
+
+# Или установите с extras
+pip install -e .[opencl]
+
+# Или установите все GPU зависимости
+pip install -e .[gpu-all]
+```
+
+Система автоматически выберет лучший доступный backend: CUDA (для NVIDIA) > OpenCL (для AMD/NVIDIA/Intel) > CPU.
 
 См. [GPU_SETUP.md](GPU_SETUP.md) для подробной инструкции по настройке GPU.
 
