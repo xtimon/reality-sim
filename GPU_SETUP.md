@@ -41,7 +41,7 @@ pip install -e .[gpu]
 
 ```bash
 # Для Linux (AMD)
-clinfo
+clinfo  # Может потребоваться установка: sudo pacman -S clinfo (Arch) или sudo apt-get install clinfo (Ubuntu/Debian)
 
 # Для macOS
 system_profiler SPDisplaysDataType
@@ -60,9 +60,32 @@ pip install -e .[opencl]
 pip install -e .[gpu-all]
 ```
 
-**Примечание для macOS:** OpenCL обычно уже установлен в системе.
+#### 3. Драйверы для AMD GPU
 
-**Примечание для Linux (AMD):** Убедитесь, что установлены драйверы AMD с поддержкой OpenCL.
+**Linux (AMD):**
+
+RealitySim поддерживает **оба** варианта драйверов для AMD GPU:
+
+1. **Mesa (открытый драйвер)** - рекомендуется для большинства случаев
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install mesa-opencl-icd opencl-headers ocl-icd-opencl-dev
+   
+   # Fedora
+   sudo dnf install mesa-libOpenCL opencl-headers ocl-icd
+   
+   # Arch Linux
+   sudo pacman -S opencl-mesa opencl-headers ocl-icd
+   ```
+   Mesa предоставляет OpenCL через `Rusticl` (новые версии) или `Clover` (старые версии).
+
+2. **AMDGPU-PRO (проприетарный)** - для максимальной производительности
+   - Скачайте с официального сайта AMD
+   - Обычно обеспечивает лучшую производительность, но может быть сложнее в установке
+
+**macOS:** OpenCL обычно уже установлен в системе.
+
+**Примечание:** Система автоматически определит доступный OpenCL драйвер (Mesa или проприетарный) и будет использовать его.
 
 ### 3. Проверка установки
 
@@ -79,6 +102,7 @@ for k, v in info.items():
 Вывод покажет:
 - Для NVIDIA: `cuda_available: True`, `cuda_gpu_name`, `cuda_gpu_memory`
 - Для AMD/OpenCL: `opencl_available: True`, `opencl_platforms` с информацией о платформах и устройствах
+- Для Mesa: в `opencl_platforms` будет указано `is_mesa: True` и название платформы будет содержать "mesa", "clover" или "rusticl"
 
 ## Использование
 
@@ -113,14 +137,18 @@ system = QuantumFabric(num_qubits=20, use_gpu=True)
 ## Преимущества GPU
 
 - **Ускорение**: Для больших систем (20+ кубитов) GPU может ускорить вычисления в 10-100 раз
-- **Больше памяти**: Современные GPU имеют 8-24 GB памяти, что позволяет работать с большими системами
+- **Больше памяти**: Современные GPU имеют 4-24 GB памяти, что позволяет работать с большими системами
 - **Параллелизм**: GPU идеально подходит для параллельных операций с матрицами
+- **Кроссплатформенность**: OpenCL работает на различных GPU (NVIDIA, AMD, Intel) и операционных системах
 
 ## Ограничения
 
 - **Память**: GPU память ограничена (обычно 4-24 GB)
 - **Overhead**: Для малых систем (< 15 кубитов) overhead передачи данных может перевесить преимущества
-- **OpenCL производительность**: OpenCL может быть медленнее CUDA на NVIDIA GPU, но является единственным вариантом для AMD GPU
+- **OpenCL производительность**: 
+  - OpenCL может быть медленнее CUDA на NVIDIA GPU, но является единственным вариантом для AMD GPU
+  - Mesa драйвер может быть медленнее проприетарных драйверов AMD, но более стабилен и проще в установке
+  - Для максимальной производительности на AMD рекомендуется AMDGPU-PRO, но Mesa также полностью поддерживается
 
 ## Рекомендации
 
@@ -166,21 +194,54 @@ pip install pyopencl
 ```
 
 #### OpenCL недоступен
-- **Linux (AMD)**: Установите драйверы AMD с поддержкой OpenCL
-  ```bash
-  # Ubuntu/Debian
-  sudo apt-get install opencl-headers ocl-icd-opencl-dev
-  ```
-- **macOS**: OpenCL обычно уже установлен
-- Проверьте доступные устройства: `clinfo` (Linux) или через Python:
-  ```python
-  import pyopencl as cl
-  platforms = cl.get_platforms()
-  for platform in platforms:
-      print(f"Platform: {platform.name}")
-      for device in platform.get_devices():
-          print(f"  Device: {device.name}")
-  ```
+
+**Linux (AMD) с Mesa:**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install mesa-opencl-icd opencl-headers ocl-icd-opencl-dev
+
+# Fedora
+sudo dnf install mesa-libOpenCL opencl-headers ocl-icd
+
+# Arch Linux
+sudo pacman -S opencl-mesa opencl-headers ocl-icd
+
+# Проверка установки
+clinfo
+```
+
+**Linux (AMD) с AMDGPU-PRO:**
+- Скачайте и установите драйверы с официального сайта AMD
+- Убедитесь, что OpenCL runtime установлен
+
+**macOS:** OpenCL обычно уже установлен
+
+**Проверка доступных устройств:**
+```bash
+# Через clinfo (Linux)
+clinfo
+
+# Или через Python
+python3 -c "
+from reality_sim.core.gpu_backend import get_device_info
+import json
+print(json.dumps(get_device_info(), indent=2, default=str))
+"
+```
+
+**Определение типа драйвера:**
+```python
+import pyopencl as cl
+platforms = cl.get_platforms()
+for platform in platforms:
+    print(f"Platform: {platform.name}")
+    print(f"  Vendor: {platform.vendor}")
+    # Mesa обычно содержит 'mesa', 'clover' или 'rusticl' в названии
+    for device in platform.get_devices():
+        print(f"  Device: {device.name}")
+        print(f"    Type: {device.type}")
+```
 
 ### Общие проблемы
 

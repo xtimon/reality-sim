@@ -253,21 +253,29 @@ class Backend:
         
         if _opencl_context is None:
             try:
-                # Пытаемся найти GPU устройство
                 platforms = cl.get_platforms()
-                devices = []
+                gpu_devices = []
+                cpu_devices = []
+                
+                # Собираем все доступные устройства, разделяя на GPU и CPU
                 for platform in platforms:
                     for device in platform.get_devices(cl.device_type.GPU):
-                        devices.append(device)
+                        gpu_devices.append((platform, device))
+                    for device in platform.get_devices(cl.device_type.CPU):
+                        cpu_devices.append((platform, device))
                 
-                if not devices:
-                    # Если GPU нет, используем CPU
-                    for platform in platforms:
-                        for device in platform.get_devices(cl.device_type.ALL):
-                            devices.append(device)
-                
-                if devices:
-                    _opencl_context = cl.Context(devices=[devices[0]])
+                # Предпочитаем GPU устройства (включая Mesa)
+                if gpu_devices:
+                    # Выбираем первое GPU устройство
+                    # Mesa обычно предоставляет GPU через платформу "Clover" или "Rusticl"
+                    platform, device = gpu_devices[0]
+                    _opencl_context = cl.Context(devices=[device])
+                    _opencl_queue = cl.CommandQueue(_opencl_context)
+                elif cpu_devices:
+                    # Fallback на CPU если GPU нет
+                    warnings.warn("GPU устройства не найдены, используется CPU OpenCL")
+                    platform, device = cpu_devices[0]
+                    _opencl_context = cl.Context(devices=[device])
                     _opencl_queue = cl.CommandQueue(_opencl_context)
                 else:
                     raise RuntimeError("Нет доступных OpenCL устройств")
@@ -391,13 +399,17 @@ def get_device_info() -> dict:
                 platform_info = {
                     'name': platform.name,
                     'vendor': platform.vendor,
+                    'version': platform.version if hasattr(platform, 'version') else None,
                     'devices': []
                 }
                 for device in platform.get_devices():
                     device_info = {
                         'name': device.name,
                         'type': str(device.type),
-                        'memory': device.global_mem_size if hasattr(device, 'global_mem_size') else None
+                        'vendor': device.vendor if hasattr(device, 'vendor') else None,
+                        'driver_version': device.driver_version if hasattr(device, 'driver_version') else None,
+                        'memory': device.global_mem_size if hasattr(device, 'global_mem_size') else None,
+                        'is_mesa': 'mesa' in platform.name.lower() or 'clover' in platform.name.lower() or 'rusticl' in platform.name.lower()
                     }
                     platform_info['devices'].append(device_info)
                 info['opencl_platforms'].append(platform_info)
